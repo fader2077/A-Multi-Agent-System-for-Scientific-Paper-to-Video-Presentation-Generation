@@ -1,0 +1,1307 @@
+以下是整合後的**完整正式計畫書版本**。
+此版本已包含：
+
+* Design Thinking
+* Chandra OCR 2
+* RTX 4090 本地部署
+* 本地 LLM Agent
+* Planner / Critic 使用 GPT-5.4 mini
+* 不做 GraphRAG 的第一階段設定
+* 實作方法、工具、模型、評估、時程與風險分析
+
+---
+
+# 研究計畫書
+
+## 一、計畫名稱
+
+### 中文題目
+
+**結合 Chandra OCR 2 與多智能體協作之學術論文影音簡報自動生成系統**
+
+### 英文題目
+
+**A Chandra OCR 2-Augmented Multi-Agent System for Scientific Paper-to-Video Presentation Generation**
+
+---
+
+## 二、研究摘要
+
+本研究旨在設計並實作一套端到端學術論文影音簡報自動生成系統。系統以學術 PDF 論文作為輸入，透過 Chandra OCR 2 進行高品質文件解析，將 PDF 轉換為結構化 Markdown、HTML、JSON 與圖表資訊，再由 Document Normalizer 將文件內容正規化為統一的論文資料格式。接著，系統透過多智能體協作完成論文理解、影片規劃、口語講稿生成、投影片生成、圖表選擇、內容審查、語音生成與影片合成。
+
+本研究第一階段**不實作 GraphRAG**，而是聚焦於「文件解析品質」、「多智能體協作流程」與「端到端影音簡報生成」。系統主要部署於具備 NVIDIA RTX 4090 的本地工作站，其中 Chandra OCR 2、本地 LLM、投影片生成、語音生成與影片合成皆在本地執行。Planner Agent 與 Critic Agent 則使用 GPT-5.4 mini 作為雲端輔助模型，以提升影片規劃與內容審查品質。Chandra OCR 2 官方說明其可將圖片與 PDF 轉換為結構化 HTML、Markdown 或 JSON，並保留 layout information，適合處理學術 PDF 中的複雜排版、表格、數學式與圖表。([GitHub][1])
+
+---
+
+## 三、研究背景與動機
+
+學術論文通常篇幅長、專業術語多，並且包含複雜的圖表、公式、實驗設計與結果分析。對研究生、專題生或跨領域學習者而言，理解一篇論文往往需要花費大量時間。此外，若要將論文轉換成課堂報告或口頭簡報，使用者還需要額外整理重點、製作投影片、撰寫講稿與準備口頭說明。
+
+現有許多 AI 摘要工具已能協助產生文字摘要，但多數系統仍停留在「文字輸出」層級，較少能完整完成：
+
+```text
+PDF 論文解析
+→ 論文重點理解
+→ 簡報架構規劃
+→ 口語化講稿生成
+→ 投影片生成
+→ 語音旁白生成
+→ 影片輸出
+```
+
+此外，學術 PDF 具有高度異質性，常見問題包含：
+
+```text
+1. 雙欄排版造成閱讀順序錯亂
+2. 表格與文字分離
+3. 圖說與圖片無法正確對應
+4. 公式無法完整擷取
+5. 頁首頁尾、頁碼與參考文獻干擾內容解析
+6. 傳統 PDF parser 對掃描檔或複雜 layout 處理不穩
+```
+
+因此，本研究導入 Chandra OCR 2 作為文件解析核心。相較於單純使用 PyMuPDF 或 pdfplumber 擷取文字，Chandra OCR 2 更適合處理包含表格、數學式、複雜 layout、圖片與圖表的學術文件。([Hugging Face][2])
+
+---
+
+## 四、研究動機與 Design Thinking 導入
+
+本研究不只是技術展示，而是希望解決一個實際的人本問題：
+
+> 使用者難以快速理解艱澀學術論文，也需要花費大量時間將論文轉換成可報告、可教學、可展示的內容。
+
+因此，本研究導入 **Design Thinking** 作為需求分析與系統開發方法。Design Thinking 強調以使用者需求為核心，透過 Empathize、Define、Ideate、Prototype 與 Test 五個階段，反覆修正並優化系統設計。
+
+---
+
+# 五、Design Thinking 與本研究對應
+
+| Design Thinking 階段 | 本研究對應內容           | 實作方式                              |
+| ------------------ | ----------------- | --------------------------------- |
+| Empathize          | 理解使用者閱讀論文與準備報告的困難 | 訪談研究生、專題生、跨領域學習者                  |
+| Define             | 明確定義使用者痛點         | 建立問題陳述與系統需求                       |
+| Ideate             | 發想技術解決方案          | 設計 Chandra OCR 2 + Multi-Agent 架構 |
+| Prototype          | 建立系統原型            | 實作 Paper-to-Video MVP             |
+| Test               | 使用者測試與迭代          | 問卷、訪談、系統輸出品質評估                    |
+
+---
+
+## 5.1 Empathize：同理使用者需求
+
+本研究目標使用者包含：
+
+```text
+1. 研究生
+2. 大學生專題生
+3. 跨領域學習者
+4. 教師與助教
+5. 需要快速理解論文內容的研究人員
+```
+
+使用者常見痛點包含：
+
+```text
+1. 論文篇幅過長，閱讀時間成本高
+2. 學術用語艱澀，初學者難以理解
+3. 方法、實驗與結果分散於不同章節
+4. 圖表與公式不容易快速理解
+5. 準備簡報需要額外花費大量時間
+6. 現有摘要工具缺乏影音化與教學化呈現
+```
+
+---
+
+## 5.2 Define：問題定義
+
+根據使用者需求，本研究將問題定義為：
+
+> 如何設計一套能自動解析學術 PDF，並將其轉換為易理解、可展示、具備講稿與語音旁白的影音簡報系統？
+
+進一步轉換為系統需求如下：
+
+| 使用者需求    | 系統需求                  |
+| -------- | --------------------- |
+| 快速理解論文   | 自動抽取研究問題、方法、貢獻與結果     |
+| 減少閱讀負擔   | 產生結構化論文理解摘要           |
+| 快速準備報告   | 自動產生投影片與講稿            |
+| 希望內容易懂   | 產生口語化、教學式說明           |
+| 希望利用圖表   | 自動擷取並選擇圖表             |
+| 擔心 AI 亂講 | 使用 Critic Agent 檢查忠實性 |
+| 希望能直接展示  | 輸出 PPTX、音訊與 MP4 影片    |
+
+---
+
+## 5.3 Ideate：解決方案發想
+
+本研究提出以下技術解決方案：
+
+```text
+PDF 解析問題
+→ 使用 Chandra OCR 2
+
+論文理解問題
+→ 使用 Paper Understanding Agent
+
+簡報架構規劃問題
+→ 使用 Planner Agent
+
+講稿生成問題
+→ 使用 Summarizer Agent
+
+圖表選擇問題
+→ 使用 Visual Selection Agent
+
+投影片生成問題
+→ 使用 Slide Agent
+
+內容可信度問題
+→ 使用 Critic Agent
+
+影音輸出問題
+→ 使用 Media Agent
+```
+
+---
+
+## 5.4 Prototype：系統原型
+
+第一階段 MVP 目標為：
+
+```text
+輸入：一篇英文或中文 PDF 論文
+
+輸出：
+1. normalized_paper.json
+2. paper_understanding.json
+3. video_outline.json
+4. script.json
+5. slides.json
+6. presentation.pptx
+7. audio files
+8. final_video.mp4
+```
+
+---
+
+## 5.5 Test：使用者測試
+
+本研究將邀請 3–5 位研究生或專題生使用系統，評估：
+
+```text
+1. 影片是否幫助理解論文
+2. 投影片是否清楚
+3. 講稿是否自然
+4. 內容是否完整
+5. 是否有明顯錯誤或幻覺
+6. 是否願意使用此系統輔助報告
+```
+
+---
+
+# 六、研究目的
+
+本研究主要目標如下：
+
+```text
+1. 建立 Chandra OCR 2-based 學術 PDF 解析流程
+2. 設計統一的 normalized paper schema
+3. 建立多智能體協作式 Paper-to-Video 生成流程
+4. 在 RTX 4090 本地環境部署主要生成與影音模組
+5. 使用 GPT-5.4 mini 輔助影片規劃與內容審查
+6. 自動生成投影片、講稿、語音與影片
+7. 建立技術與使用者導向的評估方法
+8. 為未來 GraphRAG 擴充保留架構接口
+```
+
+---
+
+# 七、研究問題
+
+## RQ1：Chandra OCR 2 是否能提升學術 PDF 解析品質？
+
+本研究將比較 Chandra OCR 2 與傳統 PDF parser 在章節擷取、圖表擷取、表格保存、閱讀順序與頁首頁尾移除上的差異。
+
+---
+
+## RQ2：如何將 Chandra OCR 2 輸出轉換為 Agent 可使用的結構化資料？
+
+Chandra 可產生 Markdown、HTML、JSON 與圖表資訊，但仍需透過 Document Normalizer 轉換為穩定 schema。
+
+---
+
+## RQ3：多智能體架構是否比單一 LLM 直接生成更穩定？
+
+本研究將比較 single-agent 與 multi-agent 方法在知識覆蓋率、忠實性、投影片品質與使用者理解度上的差異。
+
+---
+
+## RQ4：Planner Agent 與 Critic Agent 使用 GPT-5.4 mini 是否能提升生成品質？
+
+GPT-5.4 mini 官方定位為較快速、較有效率、適合高流量工作負載與 subagents 的模型，並支援 text/image input 與 400K context window，因此適合用於本研究中的規劃與審查任務。([OpenAI 開發者][3])
+
+---
+
+## RQ5：RTX 4090 單卡是否足以支撐第一階段 MVP？
+
+本研究以 RTX 4090 作為主要硬體平台。RTX 4090 具備 24 GB G6X 記憶體，可作為本地 OCR、LLM 推論與影音處理的工作站基礎。([OpenAI 開發者][4])
+
+---
+
+# 八、研究範圍
+
+## 8.1 第一階段包含
+
+```text
+1. Chandra OCR 2 文件解析
+2. PDF → Markdown / HTML / JSON / Images
+3. Document Normalizer
+4. 本地 LLM Agent
+5. GPT-5.4 mini Planner / Critic
+6. 投影片生成
+7. TTS 語音生成
+8. 影片合成
+9. 使用者測試與系統評估
+```
+
+---
+
+## 8.2 第一階段不包含
+
+```text
+1. 不做 GraphRAG
+2. 不建立知識圖譜
+3. 不做虛擬人 Avatar
+4. 不做 lip-sync
+5. 不做完整動畫生成
+6. 不做商業化部署
+```
+
+---
+
+# 九、系統整體架構
+
+```text
+User Upload PDF
+        ↓
+Chandra OCR 2 Parser
+        ↓
+Markdown / HTML / JSON / Images
+        ↓
+Document Normalizer
+        ↓
+Normalized Paper Schema
+        ↓
+Paper Understanding Agent
+        ↓
+Planner Agent
+        ↓
+Summarizer Agent
+        ↓
+Visual Selection Agent
+        ↓
+Slide Agent
+        ↓
+Critic Agent
+        ↓
+Revision Agent
+        ↓
+Media Agent
+        ↓
+PPTX + Audio + MP4 Video
+```
+
+---
+
+# 十、部署架構
+
+```text
+Local Workstation: RTX 4090
+│
+├── Chandra OCR 2
+│     └── PDF → Markdown / HTML / JSON / Images
+│
+├── Document Normalizer
+│     └── normalized_paper.json
+│
+├── Local LLM Server
+│     └── Qwen3-14B-Instruct 4-bit / Qwen3-8B fallback
+│
+├── Local Agents
+│     ├── Paper Understanding Agent
+│     ├── Summarizer Agent
+│     ├── Visual Selection Agent
+│     ├── Slide Agent
+│     └── Revision Agent
+│
+├── Cloud-assisted Agents
+│     ├── Planner Agent: GPT-5.4 mini
+│     └── Critic Agent: GPT-5.4 mini
+│
+├── Media Generation
+│     ├── python-pptx
+│     ├── Edge TTS / Piper TTS
+│     ├── MoviePy
+│     └── FFmpeg
+│
+└── Outputs
+      ├── presentation.pptx
+      ├── script.json
+      ├── audio files
+      └── final_video.mp4
+```
+
+---
+
+# 十一、硬體與軟體環境
+
+## 11.1 硬體環境
+
+| 項目      | 規格                               |
+| ------- | -------------------------------- |
+| GPU     | NVIDIA GeForce RTX 4090          |
+| VRAM    | 24 GB                            |
+| RAM     | 建議 64 GB 以上                      |
+| Storage | 建議 1 TB SSD 以上                   |
+| OS      | Ubuntu 22.04 / Windows 11 + WSL2 |
+| CUDA    | CUDA 12.x                        |
+
+---
+
+## 11.2 軟體工具
+
+| 類別                | 工具                       | 用途                           |
+| ----------------- | ------------------------ | ---------------------------- |
+| OCR / 文件解析        | Chandra OCR 2            | PDF 轉 Markdown / HTML / JSON |
+| PDF fallback      | PyMuPDF / pdfplumber     | 快速文字與表格擷取                    |
+| Local LLM         | Qwen3-14B-Instruct 4-bit | 本地 Agent 模型                  |
+| Cloud LLM         | GPT-5.4 mini             | Planner / Critic             |
+| Agent workflow    | LangGraph                | 多 Agent 流程控制                 |
+| Backend           | FastAPI                  | API 服務                       |
+| Demo UI           | Streamlit                | 快速展示                         |
+| Slide generation  | python-pptx              | 產生 PPTX                      |
+| Slide export      | LibreOffice headless     | PPTX 轉圖片                     |
+| TTS               | Edge TTS / Piper TTS     | 語音生成                         |
+| Video             | MoviePy + FFmpeg         | 影片合成                         |
+| Schema validation | Pydantic                 | JSON 結構驗證                    |
+| Local storage     | SQLite / local folder    | 儲存中間結果                       |
+
+Qwen3 官方文件說明其支援本地 CPU/GPU 執行，也支援 Ollama、LM Studio、llama.cpp、vLLM、SGLang、TGI 等部署方式，因此適合作為本研究的本地模型候選。([GitHub][5]) LangGraph 則提供 long-running、stateful workflow 或 agent 的基礎架構，適合用於多智能體流程控制與修正迴圈。([LangChain 文檔][6])
+
+---
+
+# 十二、Agent 模型配置
+
+| Agent / Module            | 使用模型 / 工具                                 | 部署位置        | 任務                                 |
+| ------------------------- | ----------------------------------------- | ----------- | ---------------------------------- |
+| Document Parser           | Chandra OCR 2                             | 本地 RTX 4090 | PDF OCR、layout parsing、圖表擷取        |
+| Parser Fallback           | PyMuPDF / pdfplumber                      | 本地 CPU      | 快速文字與表格 fallback                   |
+| Paper Understanding Agent | Qwen3-14B-Instruct 4-bit                  | 本地 RTX 4090 | 抽取研究問題、方法、貢獻、實驗與結果                 |
+| Planner Agent             | GPT-5.4 mini                              | OpenAI API  | 規劃影片結構、投影片順序與敘事邏輯                  |
+| Summarizer Agent          | Qwen3-14B-Instruct 4-bit                  | 本地 RTX 4090 | 產生逐頁口語講稿                           |
+| Visual Selection Agent    | Qwen3-14B-Instruct 4-bit                  | 本地 RTX 4090 | 根據圖說與表格選擇視覺素材                      |
+| Slide Agent               | Qwen3-14B-Instruct 4-bit                  | 本地 RTX 4090 | 產生投影片標題、bullet points、visual hints |
+| Critic Agent              | GPT-5.4 mini                              | OpenAI API  | 檢查幻覺、知識覆蓋率與投影片一致性                  |
+| Revision Agent            | Qwen3-14B-Instruct 4-bit；必要時 GPT-5.4 mini | 本地 / 雲端混合   | 根據 Critic 意見修正內容                   |
+| Media Agent               | Python tools                              | 本地          | 產生 PPTX、音訊與影片                      |
+
+---
+
+# 十三、各模組設計
+
+## 13.1 Chandra OCR 2 Parser
+
+### 功能
+
+負責將 PDF 論文轉換為結構化文件資料。
+
+### 輸入
+
+```text
+paper.pdf
+```
+
+### 輸出
+
+```text
+paper.md
+paper.html
+paper.json
+metadata.json
+extracted_images/
+```
+
+### 任務
+
+```text
+1. 擷取論文文字
+2. 保留閱讀順序
+3. 保留 layout information
+4. 擷取表格
+5. 擷取公式
+6. 擷取圖表與圖片
+7. 擷取 captions
+```
+
+---
+
+## 13.2 Document Normalizer
+
+### 功能
+
+將 Chandra 輸出轉換為統一的論文 schema。
+
+### 輸出格式
+
+```json
+{
+  "paper_id": "paper_001",
+  "title": "...",
+  "abstract": "...",
+  "sections": [
+    {
+      "section_id": "sec_1",
+      "heading": "Introduction",
+      "content": "...",
+      "page_start": 1,
+      "page_end": 2,
+      "figures": ["fig_1"],
+      "tables": []
+    }
+  ],
+  "figures": [
+    {
+      "figure_id": "fig_1",
+      "caption": "...",
+      "image_path": "images/fig_1.png",
+      "related_section": "Method"
+    }
+  ],
+  "tables": [
+    {
+      "table_id": "tab_1",
+      "caption": "...",
+      "content": "...",
+      "related_section": "Experiment"
+    }
+  ],
+  "references": []
+}
+```
+
+---
+
+## 13.3 Paper Understanding Agent
+
+### 使用模型
+
+```text
+Qwen3-14B-Instruct 4-bit
+```
+
+### 任務
+
+```text
+1. 抽取研究問題
+2. 抽取研究動機
+3. 抽取提出方法
+4. 抽取主要貢獻
+5. 抽取實驗設定
+6. 抽取主要結果
+7. 抽取限制
+8. 標記重要圖表
+```
+
+### 輸出
+
+```json
+{
+  "research_problem": "...",
+  "motivation": "...",
+  "proposed_method": "...",
+  "main_contributions": ["...", "..."],
+  "experiment_setup": "...",
+  "main_results": "...",
+  "limitations": "...",
+  "important_figures": ["fig_1", "fig_2"],
+  "important_tables": ["tab_1"],
+  "keywords": ["...", "..."]
+}
+```
+
+---
+
+## 13.4 Planner Agent
+
+### 使用模型
+
+```text
+GPT-5.4 mini
+```
+
+### 任務
+
+```text
+1. 規劃影片敘事結構
+2. 決定投影片數量與順序
+3. 控制影片長度
+4. 分配每頁投影片時間
+5. 根據目標受眾調整內容深度
+```
+
+### 輸出
+
+```json
+{
+  "video_title": "...",
+  "target_duration": 180,
+  "slides": [
+    {
+      "slide_id": 1,
+      "section": "Opening",
+      "goal": "Introduce the research problem",
+      "duration_seconds": 25
+    },
+    {
+      "slide_id": 2,
+      "section": "Method",
+      "goal": "Explain the proposed method",
+      "duration_seconds": 40
+    }
+  ]
+}
+```
+
+---
+
+## 13.5 Summarizer Agent
+
+### 使用模型
+
+```text
+Qwen3-14B-Instruct 4-bit
+```
+
+### 任務
+
+```text
+1. 根據 video_outline.json 生成逐頁講稿
+2. 將學術語句轉為口語化說明
+3. 控制每張投影片講稿長度
+4. 避免加入論文未支持的資訊
+```
+
+---
+
+## 13.6 Visual Selection Agent
+
+### 使用模型
+
+```text
+Qwen3-14B-Instruct 4-bit
+```
+
+### 任務
+
+```text
+1. 讀取 Chandra 擷取出的 figures、tables 與 captions
+2. 判斷哪些圖表適合放進簡報
+3. 將圖表對應到適合的 slide
+4. 說明選擇理由
+```
+
+---
+
+## 13.7 Slide Agent
+
+### 使用模型
+
+```text
+Qwen3-14B-Instruct 4-bit
+```
+
+### 任務
+
+```text
+1. 產生投影片標題
+2. 產生 3–5 個 bullet points
+3. 加入 visual hint
+4. 整合 selected figures / tables
+5. 避免投影片過度擁擠
+```
+
+---
+
+## 13.8 Critic Agent
+
+### 使用模型
+
+```text
+GPT-5.4 mini
+```
+
+### 任務
+
+```text
+1. 檢查講稿是否忠實於論文
+2. 檢查是否有 hallucination
+3. 檢查是否漏掉主要貢獻
+4. 檢查投影片與講稿是否一致
+5. 檢查圖表是否使用正確
+6. 給出修改建議
+```
+
+### 輸出
+
+```json
+{
+  "faithfulness_score": 4,
+  "coverage_score": 4,
+  "alignment_score": 5,
+  "visual_usage_score": 4,
+  "issues": [
+    {
+      "type": "missing_result",
+      "location": "slide_6",
+      "comment": "Main quantitative result is missing."
+    }
+  ],
+  "revision_suggestions": [
+    "Add the key result from the Results section to slide 6."
+  ],
+  "pass_or_fail": "pass"
+}
+```
+
+---
+
+## 13.9 Revision Agent
+
+### 使用模型
+
+```text
+Qwen3-14B-Instruct 4-bit
+```
+
+必要時使用：
+
+```text
+GPT-5.4 mini
+```
+
+### 任務
+
+```text
+1. 根據 Critic Agent 建議修正講稿
+2. 修正投影片 bullet points
+3. 移除 unsupported claims
+4. 補上遺漏的主要貢獻或結果
+```
+
+---
+
+## 13.10 Media Agent
+
+### 使用工具
+
+```text
+python-pptx
+LibreOffice headless
+Edge TTS / Piper TTS
+MoviePy
+FFmpeg
+```
+
+### 任務
+
+```text
+1. slides.json → presentation.pptx
+2. script.json → audio files
+3. presentation.pptx → slide images
+4. slide images + audio files → video clips
+5. video clips → final_video.mp4
+```
+
+---
+
+# 十四、系統實作流程
+
+```text
+Step 1：使用者上傳 PDF
+        ↓
+Step 2：Chandra OCR 2 解析 PDF
+        ↓
+Step 3：Document Normalizer 產生 normalized_paper.json
+        ↓
+Step 4：Paper Understanding Agent 產生論文理解摘要
+        ↓
+Step 5：Planner Agent 規劃影片架構
+        ↓
+Step 6：Summarizer Agent 產生逐頁講稿
+        ↓
+Step 7：Visual Selection Agent 選擇圖表
+        ↓
+Step 8：Slide Agent 產生投影片內容
+        ↓
+Step 9：Critic Agent 檢查內容品質
+        ↓
+Step 10：Revision Agent 修正內容
+        ↓
+Step 11：Media Agent 產生 PPTX、音訊與 MP4
+```
+
+---
+
+# 十五、專案資料夾結構
+
+```text
+paper2video-chandra-agent/
+│
+├── backend/
+│   ├── app.py
+│   ├── config.yaml
+│   │
+│   ├── api/
+│   │   ├── upload.py
+│   │   ├── generate.py
+│   │   └── status.py
+│   │
+│   ├── parsers/
+│   │   ├── chandra_parser.py
+│   │   ├── pymupdf_fallback.py
+│   │   ├── pdfplumber_fallback.py
+│   │   └── parser_router.py
+│   │
+│   ├── normalizer/
+│   │   ├── markdown_normalizer.py
+│   │   ├── html_normalizer.py
+│   │   ├── section_extractor.py
+│   │   ├── figure_table_mapper.py
+│   │   └── paper_schema_builder.py
+│   │
+│   ├── agents/
+│   │   ├── paper_understanding_agent.py
+│   │   ├── planner_agent.py
+│   │   ├── summarizer_agent.py
+│   │   ├── visual_selection_agent.py
+│   │   ├── slide_agent.py
+│   │   ├── critic_agent.py
+│   │   ├── revision_agent.py
+│   │   └── media_agent.py
+│   │
+│   ├── prompts/
+│   │   ├── paper_understanding_prompt.txt
+│   │   ├── planner_prompt.txt
+│   │   ├── summarizer_prompt.txt
+│   │   ├── visual_selection_prompt.txt
+│   │   ├── slide_prompt.txt
+│   │   └── critic_prompt.txt
+│   │
+│   ├── services/
+│   │   ├── local_llm_service.py
+│   │   ├── openai_service.py
+│   │   ├── tts_service.py
+│   │   ├── ppt_service.py
+│   │   ├── video_service.py
+│   │   └── storage_service.py
+│   │
+│   ├── schemas/
+│   │   ├── paper_schema.py
+│   │   ├── understanding_schema.py
+│   │   ├── outline_schema.py
+│   │   ├── script_schema.py
+│   │   ├── slide_schema.py
+│   │   └── critic_schema.py
+│   │
+│   └── outputs/
+│       ├── chandra/
+│       ├── normalized/
+│       ├── scripts/
+│       ├── slides/
+│       ├── audio/
+│       └── videos/
+│
+├── frontend/
+│   ├── streamlit_app.py
+│   └── web/
+│
+├── experiments/
+│   ├── eval_parsing_quality.py
+│   ├── eval_coverage.py
+│   ├── eval_faithfulness.py
+│   ├── eval_slide_alignment.py
+│   ├── eval_visual_relevance.py
+│   └── human_eval_form.md
+│
+├── data/
+│   ├── papers/
+│   ├── processed/
+│   └── benchmark/
+│
+├── requirements.txt
+└── README.md
+```
+
+---
+
+# 十六、核心 Prompt 設計
+
+## 16.1 Paper Understanding Prompt
+
+```text
+You are a scientific paper understanding agent.
+
+Input:
+- Structured paper sections
+- Figures and captions
+- Tables and captions
+
+Task:
+Extract the key scientific information needed for a short video presentation.
+
+Return JSON with:
+- research_problem
+- motivation
+- proposed_method
+- main_contributions
+- experiment_setup
+- main_results
+- limitations
+- important_figures
+- important_tables
+- keywords
+
+Rules:
+- Use only the provided paper content.
+- Do not hallucinate.
+- Prefer information from abstract, method, experiments, results, and conclusion.
+- Return JSON only.
+```
+
+---
+
+## 16.2 Planner Agent Prompt
+
+```text
+You are a video presentation planner.
+
+Create a 5-7 slide academic video outline.
+
+Input:
+{paper_understanding}
+
+Requirements:
+- Target duration: 3 minutes
+- Audience: beginner graduate students
+- Structure: opening, problem, method, experiment, result, conclusion
+- Each slide must have a clear goal and duration.
+- Return JSON only.
+```
+
+---
+
+## 16.3 Summarizer Agent Prompt
+
+```text
+You are a scientific script writing agent.
+
+Generate spoken script for each slide.
+
+Input:
+{video_outline}
+{paper_understanding}
+
+Rules:
+- Use natural spoken language.
+- Avoid unsupported claims.
+- Each slide should be suitable for TTS.
+- Keep the content faithful to the paper.
+- Return JSON only.
+```
+
+---
+
+## 16.4 Visual Selection Agent Prompt
+
+```text
+You are a visual selection agent.
+
+Given the paper figures, tables, captions, and video outline,
+select the best visuals for the presentation.
+
+Rules:
+- Select visuals only if they improve understanding.
+- Prefer model architecture figures, method diagrams, and result tables.
+- Match each visual to a specific slide.
+- Explain why each visual is selected.
+- Return JSON only.
+```
+
+---
+
+## 16.5 Critic Agent Prompt
+
+```text
+You are a scientific content critic.
+
+Check the generated slides and script against the source paper.
+
+Evaluate:
+1. Faithfulness
+2. Knowledge coverage
+3. Unsupported claims
+4. Missing contributions
+5. Slide-script alignment
+6. Visual usage correctness
+7. Audience suitability
+
+Return:
+- faithfulness_score: 1-5
+- coverage_score: 1-5
+- alignment_score: 1-5
+- visual_usage_score: 1-5
+- issues
+- revision_suggestions
+- pass_or_fail
+```
+
+---
+
+# 十七、實驗設計
+
+## 17.1 Baseline 比較
+
+| 方法         | 說明                                                        |
+| ---------- | --------------------------------------------------------- |
+| Baseline A | PyMuPDF + Single LLM                                      |
+| Baseline B | Chandra OCR 2 + Single LLM                                |
+| Baseline C | PyMuPDF + Multi-Agent                                     |
+| Proposed   | Chandra OCR 2 + Multi-Agent + GPT-5.4 mini Planner/Critic |
+
+---
+
+## 17.2 消融實驗
+
+| 實驗                            | 目的                        |
+| ----------------------------- | ------------------------- |
+| w/o Chandra OCR 2             | 檢查高品質解析對生成結果的影響           |
+| w/o Planner Agent             | 檢查影片規劃是否重要                |
+| w/o Critic Agent              | 檢查審查機制是否降低幻覺              |
+| w/o Visual Selection Agent    | 檢查圖表選擇是否提升投影片品質           |
+| Local-only Agents             | 檢查完全本地模型與混合模型差異           |
+| Cloud-assisted Planner/Critic | 檢查 GPT-5.4 mini 對規劃與審查的增益 |
+
+---
+
+## 17.3 技術評估指標
+
+### 1. Parsing Quality
+
+```text
+Section Detection Accuracy
+Reading Order Correctness
+Figure Caption Matching Accuracy
+Table Extraction Quality
+Header/Footer Removal Quality
+```
+
+### 2. Knowledge Coverage
+
+```text
+Abstract Coverage
+Contribution Coverage
+Method Coverage
+Experiment Coverage
+Result Coverage
+```
+
+可使用：
+
+```text
+ROUGE-L
+BERTScore
+Keyword Coverage
+LLM-based Coverage Score
+```
+
+### 3. Faithfulness
+
+```text
+Unsupported Claim Count
+Hallucination Rate
+Faithfulness Score
+```
+
+### 4. Slide-Script Alignment
+
+```text
+Slide bullet vs spoken script semantic similarity
+LLM alignment score
+```
+
+### 5. Visual Relevance
+
+```text
+Selected figure relevance
+Selected table relevance
+Caption-content consistency
+Visual explanation correctness
+```
+
+---
+
+# 十八、使用者評估
+
+## 18.1 測試對象
+
+```text
+1. 研究生
+2. 大學生專題生
+3. 跨領域學習者
+4. 有論文報告經驗的學生
+```
+
+---
+
+## 18.2 評估方式
+
+採用 Likert Scale 1–5 分：
+
+```text
+1 = 非常不同意
+2 = 不同意
+3 = 普通
+4 = 同意
+5 = 非常同意
+```
+
+---
+
+## 18.3 問卷項目
+
+| 評估面向  | 問題                |
+| ----- | ----------------- |
+| 易理解性  | 影片是否幫助你快速理解論文？    |
+| 完整性   | 影片是否涵蓋主要問題、方法與結果？ |
+| 忠實性   | 影片內容是否符合原始論文？     |
+| 投影片品質 | 投影片是否清楚且不過度擁擠？    |
+| 語音品質  | 語音是否自然且清楚？        |
+| 圖表使用  | 圖表是否有助於理解論文？      |
+| 實用性   | 你是否願意使用此系統輔助報告？   |
+
+---
+
+# 十九、預期成果
+
+本研究預期完成：
+
+```text
+1. 一套可上傳 PDF 並自動生成影音簡報的系統
+2. Chandra OCR 2-based scientific paper parsing pipeline
+3. 統一的 normalized_paper.json 論文資料格式
+4. 多智能體 Paper-to-Video 生成流程
+5. 自動生成 PPTX、講稿、語音與 MP4 影片
+6. 一套技術評估與使用者評估方法
+7. 可擴充至 GraphRAG 的系統基礎
+```
+
+---
+
+# 二十、研究創新點
+
+## 創新點一：Design Thinking 導向的 Paper-to-Video 系統
+
+本研究從使用者閱讀論文與準備報告的實際困難出發，透過 Empathize、Define、Ideate、Prototype、Test 的流程設計系統，而非單純串接 AI 工具。
+
+---
+
+## 創新點二：Chandra OCR 2 強化的學術 PDF 解析
+
+使用 Chandra OCR 2 處理學術論文中的複雜 layout、表格、數學式、圖表與圖片，使後續 Agent 能使用更完整的結構化資料。
+
+---
+
+## 創新點三：Hybrid Local-Cloud Multi-Agent Architecture
+
+多數生成與影音處理流程部署於 RTX 4090 本地工作站，僅將 Planner 與 Critic 交由 GPT-5.4 mini 輔助，以兼顧本地部署、成本控制與生成品質。
+
+---
+
+## 創新點四：Figure/Table-aware Slide Generation
+
+系統不只產生文字投影片，也能根據 Chandra 擷取的圖表與表格，自動選擇適合簡報的視覺素材。
+
+---
+
+## 創新點五：Critic Agent Self-Revision Loop
+
+透過 Critic Agent 檢查 hallucination、coverage、alignment 與 visual usage，再由 Revision Agent 修正內容，使系統具備自我審查能力。
+
+---
+
+# 二十一、開發時程
+
+| 階段     | 時間    | 工作內容                                  | 對應 Design Thinking |
+| ------ | ----- | ------------------------------------- | ------------------ |
+| 第 1 階段 | 1–2 週 | 使用者訪談、需求分析、問題定義                       | Empathize / Define |
+| 第 2 階段 | 2 週   | Chandra OCR 2 整合與 PDF 解析測試            | Ideate / Prototype |
+| 第 3 階段 | 2 週   | Document Normalizer 與 paper schema 設計 | Prototype          |
+| 第 4 階段 | 3 週   | 本地 Qwen3 與 Multi-Agent workflow 實作    | Prototype          |
+| 第 5 階段 | 2 週   | GPT-5.4 mini Planner / Critic 串接      | Prototype          |
+| 第 6 階段 | 2 週   | PPTX、TTS、影片合成                         | Prototype          |
+| 第 7 階段 | 3 週   | Baseline、消融實驗與使用者測試                   | Test               |
+| 第 8 階段 | 2 週   | 根據回饋修正系統與撰寫報告                         | Iterate            |
+
+---
+
+# 二十二、風險與解決方案
+
+## 風險一：Chandra OCR 2 推論成本較高
+
+解決方式：
+
+```text
+1. 使用 page range 減少處理頁數
+2. 優先處理 abstract、method、results、conclusion
+3. 若 PDF 有乾淨 text layer，使用 PyMuPDF fallback
+4. 調整 batch size 以符合 RTX 4090 VRAM
+```
+
+---
+
+## 風險二：本地 Qwen3-14B 生成品質不足
+
+解決方式：
+
+```text
+1. 使用更嚴格的 JSON schema
+2. 將任務拆成更小步驟
+3. 使用 Critic Agent 檢查輸出
+4. 嚴重錯誤時改用 GPT-5.4 mini 修正
+```
+
+---
+
+## 風險三：GPT-5.4 mini API 成本或額度限制
+
+解決方式：
+
+```text
+1. 僅在 Planner 與 Critic 使用 GPT-5.4 mini
+2. 其他生成任務使用本地模型
+3. 保留 Qwen3 local-only 備案
+4. 實驗時限制處理論文篇數與頁數
+```
+
+---
+
+## 風險四：投影片與講稿不一致
+
+解決方式：
+
+```text
+1. Slide Agent 只能根據 script.json 生成
+2. Critic Agent 檢查 slide-script alignment
+3. 若 alignment_score < 4，進入 revision loop
+```
+
+---
+
+## 風險五：圖表選擇錯誤
+
+解決方式：
+
+```text
+1. Visual Selection Agent 必須根據 caption 選圖
+2. Critic Agent 檢查 visual usage correctness
+3. 若圖表對應不明確，改用自動生成的流程圖或摘要表
+```
+
+---
+
+# 二十三、未來擴充方向
+
+## 23.1 第二階段：加入 GraphRAG
+
+未來可將 `normalized_paper.json` 轉換為知識節點：
+
+```text
+Paper node
+Section node
+Method node
+Dataset node
+Experiment node
+Result node
+Figure node
+Table node
+Claim node
+Evidence node
+```
+
+接著加入 GraphRAG：
+
+```text
+Chandra OCR 2
+↓
+Normalized Paper Schema
+↓
+Knowledge Graph Construction
+↓
+GraphRAG Retrieval
+↓
+Grounded Multi-Agent Generation
+↓
+Video Presentation
+```
+
+---
+
+## 23.2 第三階段：加入虛擬人播報
+
+未來可加入：
+
+```text
+Avatar generation
+Lip-sync
+Facial expression
+Gesture control
+```
+
+---
+
+## 23.3 第四階段：多語言與風格控制
+
+可擴充：
+
+```text
+中文報告
+英文報告
+初學者版本
+專家版本
+3 分鐘版本
+10 分鐘版本
+課堂教學版本
+研討會報告版本
+```
+
+---
+
+# 二十四、結論
+
+本研究提出一套結合 Chandra OCR 2 與多智能體協作的學術論文影音簡報自動生成系統。系統以 Design Thinking 為需求分析與開發方法，從使用者閱讀論文與準備簡報的實際痛點出發，設計一套從 PDF 論文到影音簡報的端到端流程。
+
+在技術上，本研究使用 Chandra OCR 2 處理學術 PDF 的複雜排版、圖表、表格與公式，並將解析結果轉換為統一的 structured paper schema。後續透過 Paper Understanding Agent、Planner Agent、Summarizer Agent、Visual Selection Agent、Slide Agent、Critic Agent、Revision Agent 與 Media Agent 分工完成論文理解、簡報規劃、講稿生成、投影片生成、內容審查與影片合成。
+
+本研究第一階段不實作 GraphRAG，而是優先建立穩定、可展示、可評估的 Paper-to-Video MVP。此策略可降低初期實作風險，同時保留未來擴充 GraphRAG、虛擬人播報與多語言教學模式的可能性。
+
+---
+
+# 可直接放入 proposal 的精簡摘要
+
+本研究旨在設計一套結合 Chandra OCR 2 與多智能體協作之學術論文影音簡報自動生成系統。系統以 PDF 論文作為輸入，首先透過 Chandra OCR 2 將文件轉換為 Markdown、HTML、JSON 與圖表資訊，再由 Document Normalizer 建立統一的論文結構化資料格式。後續由多個 Agent 分別負責論文理解、影片規劃、講稿生成、投影片生成、圖表選擇、內容審查與影音合成。系統主要部署於 RTX 4090 本地工作站，使用本地 Qwen3-14B-Instruct 量化模型執行多數生成任務，並以 GPT-5.4 mini 輔助 Planner Agent 與 Critic Agent，以提升影片規劃與內容忠實性審查品質。本研究第一階段不實作 GraphRAG，而是先聚焦於高品質文件解析、多智能體生成流程與端到端影片輸出，並透過解析品質、知識覆蓋率、忠實性、投影片講稿一致性與使用者評估驗證系統可行性。
+
+[1]: https://github.com/datalab-to/chandra?utm_source=chatgpt.com "datalab-to/chandra: OCR model that handles complex ..."
+[2]: https://huggingface.co/datalab-to/chandra?utm_source=chatgpt.com "datalab-to/chandra"
+[3]: https://developers.openai.com/api/docs/models/gpt-5.4-mini?utm_source=chatgpt.com "GPT-5.4 mini Model | OpenAI API"
+[4]: https://developers.openai.com/api/docs/models?utm_source=chatgpt.com "Models | OpenAI API"
+[5]: https://github.com/QwenLM/qwen3?utm_source=chatgpt.com "Qwen3 is the large language model series ..."
+[6]: https://docs.langchain.com/oss/python/langgraph/overview?utm_source=chatgpt.com "LangGraph overview - Docs by LangChain"
